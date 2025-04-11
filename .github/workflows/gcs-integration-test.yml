@@ -40,7 +40,10 @@ jobs:
         gcs-bucket: ${{ env.GCS_BUCKET }}
         
     - name: Delete local cache
-      run: rm -rf gcs-test-cache
+      run: |
+        ls -ahl
+        rm -rf gcs-test-cache
+        ls -ahl
       
     - name: Restore cache from GCS
       id: cache-restore
