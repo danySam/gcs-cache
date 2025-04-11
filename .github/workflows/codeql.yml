@@ -22,13 +22,9 @@ jobs:
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
-      with:
-        # Exclude the generated dist folder from analysis
-        paths-ignore: 
-          - 'dist/**'
-          - 'node_modules/**'
-        # Override language selection by uncommenting this line
-        # languages: go, javascript, csharp, python, cpp, java, ruby
+      # Override language selection by uncommenting this and choosing your languages
+      # with:
+      #   languages: go, javascript, csharp, python, cpp, java, ruby
 
     # Autobuild attempts to build any compiled languages (C/C++, C#, Go, or Java).
     # If this step fails, then you should remove it and run the build manually (see below).
