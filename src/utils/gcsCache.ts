@@ -73,8 +73,8 @@ export async function saveCache(
         try {
             const result = await saveToGCS(paths, key);
             if (result) {
-                core.info(`Cache saved to GCS with key: ${key}`);
-                return result; // Success ID
+                core.info(`Cache saved to GCS with key: [${key} | ${result}]`);
+                return 1; // Success ID
             }
 
             core.warning("Failed to save to GCS, falling back to GitHub cache");
@@ -178,11 +178,10 @@ function getGCSPath(pathPrefix: any, key: any, compressionMethod: CompressionMet
 async function saveToGCS(
     paths: string[],
     key: string
-): Promise<number> {
-    let cacheId = -1
+): Promise<string | undefined> {
     const storage = getGCSClient();
     if (!storage) {
-        return cacheId;
+        return undefined;
     }
 
     const bucket = core.getInput(Inputs.GCSBucket);
@@ -215,15 +214,15 @@ async function saveToGCS(
 
         const gcsPath = getGCSPath(pathPrefix, key, compressionMethod)
         core.info(`Uploading to GCS: ${bucket}/${gcsPath}`);
-        await storage.bucket(bucket).upload(archivePath, {
+        const [file] = await storage.bucket(bucket).upload(archivePath, {
             destination: gcsPath,
-            resumable: true, // this may not be necessary
+            resumable: false,
         });
 
-        return 1;
+        return file.metadata.id;
     } catch (error) {
         core.warning(`Error creating or uploading cache: ${(error as Error).message}`);
-        return -1;
+        throw new Error(`Error creating or uploading cache: ${(error as Error).message}`);
     } finally {
         try {
             await utils.unlinkFile(archivePath)
