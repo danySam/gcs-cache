@@ -98,7 +98,7 @@ jobs:
       uses: ./save
       with:
         path: cross-platform-cache
-        key: cross-platform-${{ github.run_id }}
+        key: cross-platform-${{ matrix.os }}-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
         gcs-path-prefix: cross-platform-tests
         
@@ -124,7 +124,7 @@ jobs:
       uses: ./restore
       with:
         path: cross-platform-cache
-        key: cross-platform-${{ github.run_id }}
+        key: cross-platform-${{ matrix.os }}-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
         gcs-path-prefix: cross-platform-tests
         
