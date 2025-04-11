@@ -71,7 +71,9 @@ export function isGCSAvailable(): boolean {
     try {
         const bucket = core.getInput(Inputs.GCSBucket);
         if (!bucket) {
-            core.info("GCS bucket name not provided, falling back to GitHub cache");
+            core.info(
+                "GCS bucket name not provided, falling back to GitHub cache"
+            );
             return false;
         }
 
@@ -86,7 +88,9 @@ export function isGCSAvailable(): boolean {
         core.info(`GCS bucket configured: ${bucket}`);
         return true;
     } catch (error) {
-        logWarning(`Failed to check GCS availability: ${(error as Error).message}`);
+        logWarning(
+            `Failed to check GCS availability: ${(error as Error).message}`
+        );
         return false;
     }
 }
