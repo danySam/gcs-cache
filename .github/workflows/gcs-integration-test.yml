@@ -25,19 +25,6 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_CREDENTIALS }}
         
-    - name: Verify GCP authentication
-      run: |
-        # Check if the environment variables for authentication are set
-        if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-          echo "GOOGLE_APPLICATION_CREDENTIALS is set"
-        else
-          echo "GOOGLE_APPLICATION_CREDENTIALS is NOT set"
-        fi
-        
-        # Verify the bucket exists and is accessible
-        echo "Verifying GCS bucket access..."
-        gcloud storage ls gs://${{ env.GCS_BUCKET }} || echo "Failed to access bucket"
-        
     - name: Generate test files
       run: |
         mkdir -p gcs-test-cache
@@ -51,13 +38,6 @@ jobs:
         path: gcs-test-cache
         key: gcs-integration-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
-      env:
-        ACTIONS_STEP_DEBUG: true
-        
-    - name: Verify GCS bucket contents after save
-      run: |
-        echo "Listing GCS bucket contents after save operation:"
-        gcloud storage ls gs://${{ env.GCS_BUCKET }}/github-cache/ || echo "Failed to list bucket contents"
         
     - name: Delete local cache
       run: |
@@ -72,16 +52,6 @@ jobs:
         path: gcs-test-cache
         key: gcs-integration-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
-      env:
-        ACTIONS_STEP_DEBUG: true
-        
-    - name: Debug restore operation
-      run: |
-        echo "Cache hit: ${{ steps.cache-restore.outputs.cache-hit }}"
-        echo "Current directory structure:"
-        ls -la
-        echo "GCS test cache directory (if exists):"
-        ls -la gcs-test-cache || echo "Directory does not exist"
         
     - name: Verify cache contents
       run: |

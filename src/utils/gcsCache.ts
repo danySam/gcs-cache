@@ -15,13 +15,6 @@ const DEFAULT_PATH_PREFIX = "github-cache"
 function getGCSClient(): Storage | null {
     try {
         core.info("Initializing GCS client");
-        // Log the authentication environment
-        if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-            core.info(`Using authentication from GOOGLE_APPLICATION_CREDENTIALS`);
-        } else {
-            core.info(`GOOGLE_APPLICATION_CREDENTIALS not found, using Application Default Credentials`);
-        }
-        
         return new Storage();
     } catch (error) {
         core.warning(`Failed to initialize GCS client: ${(error as Error).message}`);
@@ -104,14 +97,13 @@ export function isFeatureAvailable(): boolean {
 }
 
 async function restoreFromGCS(
-    paths: string[], 
+    _paths: string[], // validate paths?
     primaryKey: string,
     restoreKeys: string[] = [],
     options?: DownloadOptions 
 ): Promise<string | undefined> {
     const storage = getGCSClient();
     if (!storage) {
-        core.warning("Failed to initialize GCS client, cannot restore cache");
         return undefined;
     }
 
@@ -119,52 +111,17 @@ async function restoreFromGCS(
     const pathPrefix = core.getInput(Inputs.GCSPathPrefix) || DEFAULT_PATH_PREFIX;
     const compressionMethod = await utils.getCompressionMethod()
 
-    core.info(`GCS Bucket: ${bucket}`);
-    core.info(`GCS Path Prefix: ${pathPrefix}`);
-    core.info(`Primary Key: ${primaryKey}`);
-    if (restoreKeys.length > 0) {
-        core.info(`Restore Keys: ${restoreKeys.join(', ')}`);
-    }
-    
-    // Verify bucket exists
-    try {
-        const [exists] = await storage.bucket(bucket).exists();
-        if (!exists) {
-            core.warning(`Bucket ${bucket} does not exist or is not accessible`);
-            return undefined;
-        }
-        core.info(`Successfully connected to bucket: ${bucket}`);
-    } catch (error) {
-        core.warning(`Error checking bucket existence: ${(error as Error).message}`);
-        return undefined;
-    }
-
-    // Verify the paths exist for extraction
-    for (const cachePath of paths) {
-        // Create the directory if it doesn't exist
-        const dirPath = path.dirname(cachePath);
-        try {
-            await require('fs').promises.mkdir(dirPath, { recursive: true });
-            core.debug(`Created directory: ${dirPath}`);
-        } catch (error) {
-            core.warning(`Failed to create directory ${dirPath}: ${(error as Error).message}`);
-        }
-    }
-
     const archiveFolder = await utils.createTempDirectory()
     const archivePath = path.join(
         archiveFolder,
         utils.getCacheFileName(compressionMethod)
     )
 
-    core.info(`Archive Path: ${archivePath}`);
-
     const keys = [primaryKey, ...restoreKeys]
-    core.info(`Looking for cache with keys: ${keys.join(', ')}`);
     const gcsPath = await findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod)
 
     if (!gcsPath) {
-        core.info(`No matching cache found in GCS`)
+        core.info(`No matching cache found`)
         return undefined;
     }
 
@@ -179,22 +136,10 @@ async function restoreFromGCS(
         const file = storage.bucket(bucket).file(gcsPath);
         await file.download({ destination: archivePath });
 
-        // Verify the downloaded file
-        try {
-            const stats = require('fs').statSync(archivePath);
-            core.info(`Downloaded archive size: ${stats.size} bytes`);
-            if (stats.size === 0) {
-                core.warning("Downloaded archive file is empty");
-                return undefined;
-            }
-        } catch (error) {
-            core.warning(`Error checking downloaded archive: ${(error as Error).message}`);
-            return undefined;
-        }
 
-        // Always list contents in the logs for debugging
-        core.info("Listing archive contents:");
-        await listTar(archivePath, compressionMethod)
+        if (core.isDebug()) {
+            await listTar(archivePath, compressionMethod)
+        }
 
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath)
         core.info(
@@ -203,42 +148,19 @@ async function restoreFromGCS(
             )} MB (${archiveFileSize} B)`
         )
 
-        core.info(`Extracting archive to restore cache files`);
         await extractTar(archivePath, compressionMethod)
-        
-        // Verify extraction succeeded
-        let extractionSucceeded = false;
-        for (const cachePath of paths) {
-            try {
-                const exists = require('fs').existsSync(cachePath);
-                if (exists) {
-                    core.info(`Verified cache path exists after extraction: ${cachePath}`);
-                    extractionSucceeded = true;
-                    break;
-                }
-            } catch (error) {
-                core.warning(`Error checking path ${cachePath}: ${(error as Error).message}`);
-            }
-        }
-        
-        if (extractionSucceeded) {
-            core.info('Cache restored successfully from GCS');
-            return gcsPath;
-        } else {
-            core.warning('Extraction completed but cache files not found');
-            return undefined;
-        }
+        core.info('Cache restored successfully')
+
+
+        return gcsPath;
     } catch (error) {
-        core.warning(`Failed to restore from GCS: ${(error as Error).message}`);
-        if (error instanceof Error && error.stack) {
-            core.debug(`Stack trace: ${error.stack}`);
-        }
-        return undefined;
+        core.warning(`Failed to restore: ${(error as Error).message}`)
     } finally {
+
         try {
-            await utils.unlinkFile(archivePath);
+            await utils.unlinkFile(archivePath)
         } catch (error) {
-            core.debug(`Failed to delete archive: ${error}`);
+            core.debug(`Failed to delete archive: ${error}`)
         }
     }
 }
@@ -255,7 +177,6 @@ async function saveToGCS(
     let cacheId = -1
     const storage = getGCSClient();
     if (!storage) {
-        core.warning("Failed to initialize GCS client, cannot save cache");
         return cacheId;
     }
 
@@ -263,25 +184,9 @@ async function saveToGCS(
     const pathPrefix = core.getInput(Inputs.GCSPathPrefix) || DEFAULT_PATH_PREFIX;
     const compressionMethod = await utils.getCompressionMethod()
 
-    core.info(`GCS Bucket: ${bucket}`);
-    core.info(`GCS Path Prefix: ${pathPrefix}`);
-    
-    // Verify bucket exists
-    try {
-        const [exists] = await storage.bucket(bucket).exists();
-        if (!exists) {
-            core.warning(`Bucket ${bucket} does not exist or is not accessible`);
-            return -1;
-        }
-        core.info(`Successfully connected to bucket: ${bucket}`);
-    } catch (error) {
-        core.warning(`Error checking bucket existence: ${(error as Error).message}`);
-        return -1;
-    }
-
     const cachePaths = await utils.resolvePaths(paths)
-    core.info('Cache Paths:')
-    core.info(`${JSON.stringify(cachePaths)}`)
+    core.debug('Cache Paths:')
+    core.debug(`${JSON.stringify(cachePaths)}`)
 
     if (cachePaths.length === 0) {
         throw new Error(
@@ -295,60 +200,24 @@ async function saveToGCS(
         utils.getCacheFileName(compressionMethod)
     )
 
-    core.info(`Archive Path: ${archivePath}`)
+    core.debug(`Archive Path: ${archivePath}`)
 
     try {
-        core.info("Creating tar archive of cache files");
         await createTar(archiveFolder, cachePaths, compressionMethod)
-        
-        // Always show the tar contents in logs for debugging
-        core.info("Listing tar archive contents:");
-        await listTar(archivePath, compressionMethod)
-        
-        // Check if the archive was created and has content
-        try {
-            const stats = require('fs').statSync(archivePath);
-            core.info(`Archive size: ${stats.size} bytes`);
-            if (stats.size === 0) {
-                core.warning("Archive file is empty, no data to upload");
-                return -1;
-            }
-        } catch (error) {
-            core.warning(`Error checking archive file: ${(error as Error).message}`);
-            return -1;
+        if (core.isDebug()) {
+            await listTar(archivePath, compressionMethod)
         }
 
         const gcsPath = getGCSPath(pathPrefix, key, compressionMethod)
         core.info(`Uploading to GCS: ${bucket}/${gcsPath}`);
-        
         await storage.bucket(bucket).upload(archivePath, {
             destination: gcsPath,
-            resumable: true,
-            gzip: false, // Disable auto compression since we're already using compression
-            // Add metadata for easier identification
-            metadata: {
-                metadata: {
-                    cacheKey: key,
-                    createdBy: 'gcs-cache-action',
-                    createdAt: new Date().toISOString()
-                }
-            }
+            resumable: true, // this may not be necessary
         });
-        
-        core.info("Upload complete, verifying file exists in GCS");
-        const [exists] = await storage.bucket(bucket).file(gcsPath).exists();
-        if (exists) {
-            core.info(`Successfully verified cache file exists in GCS: ${bucket}/${gcsPath}`);
-            return 1;
-        } else {
-            core.warning(`Upload appeared to succeed but file not found in GCS`);
-            return -1;
-        }
+
+        return 1;
     } catch (error) {
         core.warning(`Error creating or uploading cache: ${(error as Error).message}`);
-        if (error instanceof Error && error.stack) {
-            core.debug(`Stack trace: ${error.stack}`);
-        }
         return -1;
     } finally {
         try {
@@ -368,46 +237,15 @@ async function findFileOnGCS(
 ): Promise<string | undefined> {
     for (const key of keys) {
         const gcsPath = getGCSPath(pathPrefix, key, compressionMethod)
-        core.info(`Checking if cache exists at: ${bucket}/${gcsPath}`);
-        
-        try {
-            if (await checkFileExists(storage, bucket, gcsPath)) {
-                core.info(`Found cache file in bucket: ${bucket} with path: ${gcsPath}`)
-                return gcsPath
-            } else {
-                core.info(`No cache file found at: ${bucket}/${gcsPath}`);
-            }
-        } catch (error) {
-            core.warning(`Error checking if file exists at ${bucket}/${gcsPath}: ${(error as Error).message}`);
+        if (await checkFileExists(storage, bucket, gcsPath)) {
+            core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`)
+            return gcsPath
         }
     }
-    
-    // If no exact matches, try listing the directory to see what's available
-    try {
-        core.info(`Listing files in prefix: ${pathPrefix}`);
-        const [files] = await storage.bucket(bucket).getFiles({ prefix: pathPrefix });
-        
-        if (files.length > 0) {
-            core.info(`Found ${files.length} files in ${pathPrefix}:`);
-            for (const file of files) {
-                core.info(`- ${file.name}`);
-            }
-        } else {
-            core.info(`No files found in prefix: ${pathPrefix}`);
-        }
-    } catch (error) {
-        core.warning(`Error listing files in prefix ${pathPrefix}: ${(error as Error).message}`);
-    }
-    
     return undefined
 }
 
 async function checkFileExists(storage: Storage, bucket: string, path: string): Promise<boolean> {
-    try {
-        const [exists] = await storage.bucket(bucket).file(path).exists();
-        return exists;
-    } catch (error) {
-        core.warning(`Error checking file existence: ${(error as Error).message}`);
-        throw error;
-    }
+    const [exists] = await storage.bucket(bucket).file(path).exists()
+    return exists
 }
