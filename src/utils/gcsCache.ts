@@ -105,7 +105,7 @@ async function restoreFromGCS(
     _paths: string[], // validate paths?
     primaryKey: string,
     restoreKeys: string[] = [],
-    options?: DownloadOptions 
+    options?: DownloadOptions
 ): Promise<string | undefined> {
     const storage = getGCSClient();
     if (!storage) {
