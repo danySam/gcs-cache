@@ -20,3 +20,4 @@ reviewed:
   - glob # ISC
   - prettier # MIT
   - lodash # MIT
+  - "@google-cloud/storage" # Apache-2.0
