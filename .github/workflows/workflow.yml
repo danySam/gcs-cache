@@ -51,7 +51,7 @@ jobs:
       shell: bash
       run: __tests__/create-cache-files.sh ${{ runner.os }} ~/test-cache
     - name: Save cache
-      uses: ./
+      uses: ./save
       with:
         key: test-${{ runner.os }}-${{ github.run_id }}
         path: |
@@ -68,7 +68,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
     - name: Restore cache
-      uses: ./
+      uses: ./restore
       with:
         key: test-${{ runner.os }}-${{ github.run_id }}
         path: |
@@ -100,7 +100,7 @@ jobs:
     - name: Generate files
       run: __tests__/create-cache-files.sh proxy test-cache
     - name: Save cache
-      uses: ./
+      uses: ./save
       with:
         key: test-proxy-${{ github.run_id }}
         path: test-cache
@@ -121,7 +121,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
     - name: Restore cache
-      uses: ./
+      uses: ./restore
       with:
         key: test-proxy-${{ github.run_id }}
         path: test-cache
@@ -144,7 +144,7 @@ jobs:
     - name: Generate files
       run: __tests__/create-cache-files.sh gcs test-gcs-cache
     - name: Save cache to GCS
-      uses: ./
+      uses: ./save
       with:
         key: test-gcs-${{ github.run_id }}
         path: test-gcs-cache
@@ -164,7 +164,7 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_CREDENTIALS }}
     - name: Restore cache from GCS
-      uses: ./
+      uses: ./restore
       with:
         key: test-gcs-${{ github.run_id }}
         path: test-gcs-cache
@@ -172,7 +172,7 @@ jobs:
     - name: Verify GCS cache
       run: __tests__/verify-cache-files.sh gcs test-gcs-cache
   
-  test-gcs-fallback:
+  test-gcs-fallback-save:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     env:
@@ -183,13 +183,23 @@ jobs:
     - name: Generate files
       run: __tests__/create-cache-files.sh fallback test-fallback-cache
     - name: Save with GCS fallback
-      uses: ./
+      uses: ./save
       with:
         key: test-fallback-${{ github.run_id }}
         path: test-fallback-cache
         gcs-bucket: ${{ env.GCS_BUCKET }}
+        
+  test-gcs-fallback-restore:
+    needs: test-gcs-fallback-save
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    env:
+      GCS_BUCKET: "non-existent-bucket-for-test"
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
     - name: Restore with GCS fallback
-      uses: ./
+      uses: ./restore
       with:
         key: test-fallback-${{ github.run_id }}
         path: test-fallback-cache
