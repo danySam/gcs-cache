@@ -38,6 +38,7 @@ jobs:
         path: gcs-test-cache
         key: gcs-integration-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
+        gcs-path-prefix: basic-test 
         
     - name: Delete local cache
       run: |
@@ -52,6 +53,7 @@ jobs:
         path: gcs-test-cache
         key: gcs-integration-${{ github.run_id }}
         gcs-bucket: ${{ env.GCS_BUCKET }}
+        gcs-path-prefix: basic-test 
         
     - name: Verify cache contents
       run: |
