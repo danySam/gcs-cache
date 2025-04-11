@@ -138,7 +138,8 @@ jobs:
         fi
         echo "Cross-platform cache successfully restored"
   
-  test-gcs-fallback-save:
+  # Test 1: Fallback when bucket doesn't exist
+  test-gcs-fallback-nonexistent-bucket-save:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
@@ -146,35 +147,77 @@ jobs:
       
     - name: Generate fallback test files
       run: |
-        mkdir -p fallback-cache
-        echo "Fallback test content $(date)" > fallback-cache/fallback.txt
+        mkdir -p fallback-cache1
+        echo "Fallback test content - nonexistent bucket $(date)" > fallback-cache1/fallback.txt
         
-    - name: Test fallback to GitHub cache (save)
+    - name: Test fallback to GitHub cache (nonexistent bucket)
       uses: ./save
       with:
-        path: fallback-cache
-        key: fallback-test-${{ github.run_id }}
+        path: fallback-cache1
+        key: fallback-test-nonexist-${{ github.run_id }}
         gcs-bucket: "this-bucket-does-not-exist-${{ github.run_id }}"
         
-  test-gcs-fallback-restore:
-    needs: test-gcs-fallback-save
+  test-gcs-fallback-nonexistent-bucket-restore:
+    needs: test-gcs-fallback-nonexistent-bucket-save
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       
-    - name: Restore with fallback
-      id: restore-fallback
+    - name: Restore with fallback (nonexistent bucket)
+      id: restore-fallback-nonexist
       uses: ./restore
       with:
-        path: fallback-cache
-        key: fallback-test-${{ github.run_id }}
+        path: fallback-cache1
+        key: fallback-test-nonexist-${{ github.run_id }}
         gcs-bucket: "this-bucket-does-not-exist-${{ github.run_id }}"
         
     - name: Verify fallback mechanism worked
       run: |
-        if [ ! -f "fallback-cache/fallback.txt" ]; then
-          echo "Fallback mechanism did not work correctly"
+        if [ ! -f "fallback-cache1/fallback.txt" ]; then
+          echo "Fallback mechanism did not work correctly for nonexistent bucket"
           exit 1
         fi
-        echo "Successfully fell back to GitHub cache"
+        echo "Successfully fell back to GitHub cache (nonexistent bucket)"
+        
+  # Test 2: Fallback when no bucket is specified
+  test-gcs-fallback-no-bucket-save:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Generate fallback test files (no bucket)
+      run: |
+        mkdir -p fallback-cache2
+        echo "Fallback test content - no bucket $(date)" > fallback-cache2/fallback.txt
+        
+    - name: Test fallback to GitHub cache (no bucket)
+      uses: ./save
+      with:
+        path: fallback-cache2
+        key: fallback-test-nobucket-${{ github.run_id }}
+        # No gcs-bucket specified
+        
+  test-gcs-fallback-no-bucket-restore:
+    needs: test-gcs-fallback-no-bucket-save
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Restore with fallback (no bucket)
+      id: restore-fallback-nobucket
+      uses: ./restore
+      with:
+        path: fallback-cache2
+        key: fallback-test-nobucket-${{ github.run_id }}
+        # No gcs-bucket specified
+        
+    - name: Verify fallback mechanism worked
+      run: |
+        if [ ! -f "fallback-cache2/fallback.txt" ]; then
+          echo "Fallback mechanism did not work correctly for no bucket"
+          exit 1
+        fi
+        echo "Successfully fell back to GitHub cache (no bucket)"

@@ -44,12 +44,13 @@ export async function restoreCache(
                 return result;
             }
 
-            core.info("Cache not found in GCS");
-            return undefined;
+            core.info("Cache not found in GCS, falling back to GitHub cache");
         } catch (error) {
             core.warning(`Failed to restore from GCS: ${(error as Error).message}`);
             core.info("Falling back to GitHub cache");
         }
+    } else {
+        core.info("GCS not configured, using GitHub cache");
     }
 
     // Fall back to GitHub cache
@@ -76,12 +77,14 @@ export async function saveCache(
                 return result; // Success ID
             }
 
-            core.warning("Failed to save to GCS");
+            core.warning("Failed to save to GCS, falling back to GitHub cache");
             return -1
         } catch (error) {
             core.warning(`Failed to save to GCS: ${(error as Error).message}`);
             core.info("Falling back to GitHub cache");
         }
+    } else {
+        core.info("GCS not configured, using GitHub cache");
     }
 
     // Fall back to GitHub cache

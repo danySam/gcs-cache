@@ -74,7 +74,16 @@ export function isGCSAvailable(): boolean {
             core.info("GCS bucket name not provided, falling back to GitHub cache");
             return false;
         }
-
+        
+        // We're not doing an actual authentication check here as it would require
+        // making an API call. The Storage client will handle authentication later
+        // via Application Default Credentials (ADC) which supports multiple auth methods:
+        // - Service account JSON key file (GOOGLE_APPLICATION_CREDENTIALS)
+        // - Workload Identity Federation
+        // - Metadata server-based auth (GCE, GKE)
+        // - User credentials from gcloud CLI
+        
+        core.info(`GCS bucket configured: ${bucket}`);
         return true;
     } catch (error) {
         logWarning(`Failed to check GCS availability: ${(error as Error).message}`);
