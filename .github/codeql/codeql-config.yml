@@ -1,0 +1,9 @@
+name: "GCS Cache CodeQL config"
+
+paths-ignore:
+  - dist
+  - node_modules
+
+# The queries section can be used to include specific queries from a CodeQL pack
+# queries:
+#   - uses: security-extended
