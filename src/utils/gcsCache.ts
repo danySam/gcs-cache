@@ -128,7 +128,7 @@ async function restoreFromGCS(
     );
 
     const keys = [primaryKey, ...restoreKeys];
-    const gcsPath = await findFileOnGCS(
+    const gcsPath = await findLatestFileOnGCS(
         storage,
         bucket,
         pathPrefix,
@@ -248,28 +248,37 @@ async function saveToGCS(
     }
 }
 
-async function findFileOnGCS(
+async function findLatestFileOnGCS(
     storage: Storage,
     bucket: string,
     pathPrefix: string,
     keys: string[],
     compressionMethod: CompressionMethod
 ): Promise<string | undefined> {
+    let latestFile: { path: string; updated: Date } | undefined = undefined;
     for (const key of keys) {
-        const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
-        if (await checkFileExists(storage, bucket, gcsPath)) {
-            core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
-            return gcsPath;
+        const prefix = `${pathPrefix}/${key}`;
+        const [files] = await storage.bucket(bucket).getFiles({ prefix });
+        for (const file of files) {
+            if (!file.name.endsWith(utils.getCacheFileName(compressionMethod)))
+                continue;
+            core.debug(
+                `Found file: ${file.name} (created: ${file.metadata.timeCreated})`
+            );
+            const created = file.metadata.timeCreated
+                ? new Date(file.metadata.timeCreated)
+                : undefined;
+            if (!created) {
+                continue;
+            }
+            if (!latestFile || created > latestFile.updated) {
+                latestFile = { path: file.name, updated: created };
+            }
         }
     }
+    if (latestFile) {
+        core.info(`Use cache: ${latestFile.path} from GCS bucket ${bucket}`);
+        return latestFile.path;
+    }
     return undefined;
-}
-
-async function checkFileExists(
-    storage: Storage,
-    bucket: string,
-    path: string
-): Promise<boolean> {
-    const [exists] = await storage.bucket(bucket).file(path).exists();
-    return exists;
 }

@@ -92559,7 +92559,7 @@ function restoreFromGCS(_paths_1, primaryKey_1) {
         const archiveFolder = yield utils.createTempDirectory();
         const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
         const keys = [primaryKey, ...restoreKeys];
-        const gcsPath = yield findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
+        const gcsPath = yield findLatestFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
         if (!gcsPath) {
             core.info(`No matching cache found`);
             return undefined;
@@ -92643,22 +92643,32 @@ function saveToGCS(paths, key) {
         }
     });
 }
-function findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
+function findLatestFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
     return __awaiter(this, void 0, void 0, function* () {
+        let latestFile = undefined;
         for (const key of keys) {
-            const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
-            if (yield checkFileExists(storage, bucket, gcsPath)) {
-                core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
-                return gcsPath;
+            const prefix = `${pathPrefix}/${key}`;
+            const [files] = yield storage.bucket(bucket).getFiles({ prefix });
+            for (const file of files) {
+                if (!file.name.endsWith(utils.getCacheFileName(compressionMethod)))
+                    continue;
+                core.debug(`Found file: ${file.name} (created: ${file.metadata.timeCreated})`);
+                const created = file.metadata.timeCreated
+                    ? new Date(file.metadata.timeCreated)
+                    : undefined;
+                if (!created) {
+                    continue;
+                }
+                if (!latestFile || created > latestFile.updated) {
+                    latestFile = { path: file.name, updated: created };
+                }
             }
         }
+        if (latestFile) {
+            core.info(`Use cache: ${latestFile.path} from GCS bucket ${bucket}`);
+            return latestFile.path;
+        }
         return undefined;
-    });
-}
-function checkFileExists(storage, bucket, path) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const [exists] = yield storage.bucket(bucket).file(path).exists();
-        return exists;
     });
 }
 
