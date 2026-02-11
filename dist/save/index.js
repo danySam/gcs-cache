@@ -92514,7 +92514,7 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             try {
                 const result = yield restoreFromGCS(paths, primaryKey, restoreKeys, options);
                 if (result) {
-                    core.info(`Cache restored from GCS with key: ${result}`);
+                    core.info(`Cache restored from GCS with key: ${result.cacheKey}`);
                     return result;
                 }
                 core.info("Cache not found in GCS, falling back to GitHub cache");
@@ -92666,7 +92666,7 @@ function findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
         for (const key of keys) {
             const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
             if (yield checkFileExists(storage, bucket, gcsPath)) {
-                core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
+                core.info(`Found file on bucket: ${bucket} with key: ${key} at path: ${gcsPath}`);
                 return { cacheKey: key, gcsPath };
             }
         }

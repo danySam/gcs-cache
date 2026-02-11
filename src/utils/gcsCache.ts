@@ -52,7 +52,7 @@ export async function restoreCache(
             );
 
             if (result) {
-                core.info(`Cache restored from GCS with key: ${result}`);
+                core.info(`Cache restored from GCS with key: ${result.cacheKey}`);
                 return result;
             }
 
@@ -268,7 +268,7 @@ async function findFileOnGCS(
     for (const key of keys) {
         const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
         if (await checkFileExists(storage, bucket, gcsPath)) {
-            core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
+            core.info(`Found file on bucket: ${bucket} with key: ${key} at path: ${gcsPath}`);
             return { cacheKey: key, gcsPath };
 
         }
