@@ -42,7 +42,7 @@ export async function restoreImpl(
         const failOnCacheMiss = utils.getInputAsBool(Inputs.FailOnCacheMiss);
         const lookupOnly = utils.getInputAsBool(Inputs.LookupOnly);
 
-        const cacheKey = await cache.restoreCache(
+        const cacheHit = await cache.restoreCache(
             cachePaths,
             primaryKey,
             restoreKeys,
@@ -50,7 +50,7 @@ export async function restoreImpl(
             enableCrossOsArchive
         );
 
-        if (!cacheKey) {
+        if (!cacheHit) {
             // `cache-hit` is intentionally not set to `false` here to preserve existing behavior
             // See https://github.com/actions/cache/issues/1466
 
@@ -69,21 +69,21 @@ export async function restoreImpl(
         }
 
         // Store the matched cache key in states
-        stateProvider.setState(State.CacheMatchedKey, cacheKey);
+        stateProvider.setState(State.CacheMatchedKey, cacheHit.cacheKey);
 
         const isExactKeyMatch = utils.isExactKeyMatch(
             core.getInput(Inputs.Key, { required: true }),
-            cacheKey
+            cacheHit.cacheKey
         );
 
         core.setOutput(Outputs.CacheHit, isExactKeyMatch.toString());
         if (lookupOnly) {
-            core.info(`Cache found and can be restored from key: ${cacheKey}`);
+            core.info(`Cache found and can be restored from key: ${cacheHit.cacheKey}`);
         } else {
-            core.info(`Cache restored from key: ${cacheKey}`);
+            core.info(`Cache restored from key: ${cacheHit.cacheKey}`);
         }
 
-        return cacheKey;
+        return cacheHit.cacheKey;
     } catch (error: unknown) {
         core.setFailed((error as Error).message);
         if (earlyExit) {

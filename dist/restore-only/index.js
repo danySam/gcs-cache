@@ -92142,8 +92142,8 @@ function restoreImpl(stateProvider, earlyExit) {
             const enableCrossOsArchive = utils.getInputAsBool(constants_1.Inputs.EnableCrossOsArchive);
             const failOnCacheMiss = utils.getInputAsBool(constants_1.Inputs.FailOnCacheMiss);
             const lookupOnly = utils.getInputAsBool(constants_1.Inputs.LookupOnly);
-            const cacheKey = yield cache.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, enableCrossOsArchive);
-            if (!cacheKey) {
+            const cacheHit = yield cache.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, enableCrossOsArchive);
+            if (!cacheHit) {
                 // `cache-hit` is intentionally not set to `false` here to preserve existing behavior
                 // See https://github.com/actions/cache/issues/1466
                 if (failOnCacheMiss) {
@@ -92156,16 +92156,16 @@ function restoreImpl(stateProvider, earlyExit) {
                 return;
             }
             // Store the matched cache key in states
-            stateProvider.setState(constants_1.State.CacheMatchedKey, cacheKey);
-            const isExactKeyMatch = utils.isExactKeyMatch(core.getInput(constants_1.Inputs.Key, { required: true }), cacheKey);
+            stateProvider.setState(constants_1.State.CacheMatchedKey, cacheHit.cacheKey);
+            const isExactKeyMatch = utils.isExactKeyMatch(core.getInput(constants_1.Inputs.Key, { required: true }), cacheHit.cacheKey);
             core.setOutput(constants_1.Outputs.CacheHit, isExactKeyMatch.toString());
             if (lookupOnly) {
-                core.info(`Cache found and can be restored from key: ${cacheKey}`);
+                core.info(`Cache found and can be restored from key: ${cacheHit.cacheKey}`);
             }
             else {
-                core.info(`Cache restored from key: ${cacheKey}`);
+                core.info(`Cache restored from key: ${cacheHit.cacheKey}`);
             }
-            return cacheKey;
+            return cacheHit.cacheKey;
         }
         catch (error) {
             core.setFailed(error.message);
@@ -92515,7 +92515,12 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             core.info("GCS not configured, using GitHub cache");
         }
         // Fall back to GitHub cache
-        return yield cache.restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive);
+        const gitHubCacheKey = yield cache.restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive);
+        if (gitHubCacheKey) {
+            core.info(`Cache restored from GitHub cache with key: ${gitHubCacheKey}`);
+            return { cacheKey: gitHubCacheKey, gcsPath: "" }; // gcsPath is empty since it's from GitHub cache
+        }
+        return undefined;
     });
 }
 function saveCache(paths, key, options, enableCrossOsArchive) {
@@ -92559,19 +92564,19 @@ function restoreFromGCS(_paths_1, primaryKey_1) {
         const archiveFolder = yield utils.createTempDirectory();
         const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
         const keys = [primaryKey, ...restoreKeys];
-        const gcsPath = yield findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
-        if (!gcsPath) {
+        const cacheHit = yield findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
+        if (!cacheHit) {
             core.info(`No matching cache found`);
             return undefined;
         }
         // If lookup only, just return the key
         if (options === null || options === void 0 ? void 0 : options.lookupOnly) {
-            core.info(`Cache found in GCS with key: ${gcsPath}`);
-            return gcsPath;
+            core.info(`Cache found in GCS with key: ${cacheHit.cacheKey}`);
+            return cacheHit;
         }
         try {
-            core.info(`Downloading from GCS: ${bucket}/${gcsPath}`);
-            const file = storage.bucket(bucket).file(gcsPath);
+            core.info(`Downloading from GCS: ${bucket}/${cacheHit.gcsPath}`);
+            const file = storage.bucket(bucket).file(cacheHit.gcsPath);
             yield file.download({ destination: archivePath });
             if (core.isDebug()) {
                 yield (0, tar_1.listTar)(archivePath, compressionMethod);
@@ -92580,7 +92585,7 @@ function restoreFromGCS(_paths_1, primaryKey_1) {
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
             yield (0, tar_1.extractTar)(archivePath, compressionMethod);
             core.info("Cache restored successfully");
-            return gcsPath;
+            return cacheHit;
         }
         catch (error) {
             core.warning(`Failed to restore: ${error.message}`);
@@ -92649,7 +92654,7 @@ function findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
             const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
             if (yield checkFileExists(storage, bucket, gcsPath)) {
                 core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
-                return gcsPath;
+                return { cacheKey: key, gcsPath };
             }
         }
         return undefined;
