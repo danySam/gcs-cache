@@ -16,6 +16,8 @@ interface CacheInput {
     enableCrossOsArchive?: boolean;
     failOnCacheMiss?: boolean;
     lookupOnly?: boolean;
+    gcsBucket?: string;
+    gcsPathPrefix?: string;
 }
 
 export function setInputs(input: CacheInput): void {
@@ -32,6 +34,10 @@ export function setInputs(input: CacheInput): void {
         setInput(Inputs.FailOnCacheMiss, input.failOnCacheMiss.toString());
     input.lookupOnly !== undefined &&
         setInput(Inputs.LookupOnly, input.lookupOnly.toString());
+    input.gcsBucket !== undefined &&
+        setInput(Inputs.GCSBucket, input.gcsBucket);
+    input.gcsPathPrefix !== undefined &&
+        setInput(Inputs.GCSPathPrefix, input.gcsPathPrefix);
 }
 
 export function clearInputs(): void {
@@ -42,4 +48,6 @@ export function clearInputs(): void {
     delete process.env[getInputName(Inputs.EnableCrossOsArchive)];
     delete process.env[getInputName(Inputs.FailOnCacheMiss)];
     delete process.env[getInputName(Inputs.LookupOnly)];
+    delete process.env[getInputName(Inputs.GCSBucket)];
+    delete process.env[getInputName(Inputs.GCSPathPrefix)];
 }
