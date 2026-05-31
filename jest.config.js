@@ -9,6 +9,9 @@ module.exports = {
     transform: {
         "^.+\\.ts$": "ts-jest"
     },
+    moduleNameMapper: {
+        "^@google-cloud/storage$": "<rootDir>/__mocks__/@google-cloud/storage.ts"
+    },
     verbose: true
 };
 
