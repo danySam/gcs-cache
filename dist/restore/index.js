@@ -92142,8 +92142,8 @@ function restoreImpl(stateProvider, earlyExit) {
             const enableCrossOsArchive = utils.getInputAsBool(constants_1.Inputs.EnableCrossOsArchive);
             const failOnCacheMiss = utils.getInputAsBool(constants_1.Inputs.FailOnCacheMiss);
             const lookupOnly = utils.getInputAsBool(constants_1.Inputs.LookupOnly);
-            const cacheKey = yield cache.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, enableCrossOsArchive);
-            if (!cacheKey) {
+            const cacheHit = yield cache.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, enableCrossOsArchive);
+            if (!cacheHit) {
                 // `cache-hit` is intentionally not set to `false` here to preserve existing behavior
                 // See https://github.com/actions/cache/issues/1466
                 if (failOnCacheMiss) {
@@ -92155,6 +92155,7 @@ function restoreImpl(stateProvider, earlyExit) {
                 ].join(", ")}`);
                 return;
             }
+            const { cacheKey } = cacheHit;
             // Store the matched cache key in states
             stateProvider.setState(constants_1.State.CacheMatchedKey, cacheKey);
             const isExactKeyMatch = utils.isExactKeyMatch(core.getInput(constants_1.Inputs.Key, { required: true }), cacheKey);
@@ -92501,7 +92502,7 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             try {
                 const result = yield restoreFromGCS(paths, primaryKey, restoreKeys, options);
                 if (result) {
-                    core.info(`Cache restored from GCS with key: ${result}`);
+                    core.info(`Cache restored from GCS with key: ${result.cacheKey}`);
                     return result;
                 }
                 core.info("Cache not found in GCS, falling back to GitHub cache");
@@ -92515,7 +92516,11 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             core.info("GCS not configured, using GitHub cache");
         }
         // Fall back to GitHub cache
-        return yield cache.restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive);
+        const gitHubCacheKey = yield cache.restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive);
+        if (gitHubCacheKey) {
+            return { cacheKey: gitHubCacheKey, gcsPath: "" };
+        }
+        return undefined;
     });
 }
 function saveCache(paths, key, options, enableCrossOsArchive) {
@@ -92547,8 +92552,7 @@ function isFeatureAvailable() {
     return (0, actionUtils_1.isGCSAvailable)() || cache.isFeatureAvailable();
 }
 function restoreFromGCS(_paths_1, primaryKey_1) {
-    return __awaiter(this, arguments, void 0, function* (_paths, // validate paths?
-    primaryKey, restoreKeys = [], options) {
+    return __awaiter(this, arguments, void 0, function* (_paths, primaryKey, restoreKeys = [], options) {
         const storage = getGCSClient();
         if (!storage) {
             return undefined;
@@ -92559,19 +92563,19 @@ function restoreFromGCS(_paths_1, primaryKey_1) {
         const archiveFolder = yield utils.createTempDirectory();
         const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
         const keys = [primaryKey, ...restoreKeys];
-        const gcsPath = yield findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
-        if (!gcsPath) {
+        const cacheHit = yield findLatestFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod);
+        if (!cacheHit) {
             core.info(`No matching cache found`);
             return undefined;
         }
         // If lookup only, just return the key
         if (options === null || options === void 0 ? void 0 : options.lookupOnly) {
-            core.info(`Cache found in GCS with key: ${gcsPath}`);
-            return gcsPath;
+            core.info(`Cache found in GCS with key: ${cacheHit.cacheKey}`);
+            return cacheHit;
         }
         try {
-            core.info(`Downloading from GCS: ${bucket}/${gcsPath}`);
-            const file = storage.bucket(bucket).file(gcsPath);
+            core.info(`Downloading from GCS: ${bucket}/${cacheHit.gcsPath}`);
+            const file = storage.bucket(bucket).file(cacheHit.gcsPath);
             yield file.download({ destination: archivePath });
             if (core.isDebug()) {
                 yield (0, tar_1.listTar)(archivePath, compressionMethod);
@@ -92580,7 +92584,7 @@ function restoreFromGCS(_paths_1, primaryKey_1) {
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
             yield (0, tar_1.extractTar)(archivePath, compressionMethod);
             core.info("Cache restored successfully");
-            return gcsPath;
+            return cacheHit;
         }
         catch (error) {
             core.warning(`Failed to restore: ${error.message}`);
@@ -92643,22 +92647,32 @@ function saveToGCS(paths, key) {
         }
     });
 }
-function findFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
+function findLatestFileOnGCS(storage, bucket, pathPrefix, keys, compressionMethod) {
     return __awaiter(this, void 0, void 0, function* () {
+        let latestFile = undefined;
         for (const key of keys) {
-            const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
-            if (yield checkFileExists(storage, bucket, gcsPath)) {
-                core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
-                return gcsPath;
+            const prefix = `${pathPrefix}/${key}`;
+            const [files] = yield storage.bucket(bucket).getFiles({ prefix });
+            for (const file of files) {
+                if (!file.name.endsWith(utils.getCacheFileName(compressionMethod)))
+                    continue;
+                core.debug(`Found file: ${file.name} (created: ${file.metadata.timeCreated})`);
+                const created = file.metadata.timeCreated
+                    ? new Date(file.metadata.timeCreated)
+                    : undefined;
+                if (!created) {
+                    continue;
+                }
+                if (!latestFile || created > latestFile.updated) {
+                    latestFile = { path: file.name, cacheKey: key, updated: created };
+                }
             }
         }
+        if (latestFile) {
+            core.info(`Use cache: ${latestFile.path} from GCS bucket ${bucket}`);
+            return { cacheKey: latestFile.cacheKey, gcsPath: latestFile.path };
+        }
         return undefined;
-    });
-}
-function checkFileExists(storage, bucket, path) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const [exists] = yield storage.bucket(bucket).file(path).exists();
-        return exists;
     });
 }
 
@@ -94418,7 +94432,7 @@ class Bucket extends index_js_1.ServiceObject {
      *     **Note**: For configuring a raw-formatted rule object to be passed as `action`
      *               please refer to the [examples]{@link https://cloud.google.com/storage/docs/managing-lifecycles#configexamples}.
      * @param {object} rule.condition Condition a bucket must meet before the
-     *     action occurson the bucket. Refer to followitn supported [conditions]{@link https://cloud.google.com/storage/docs/lifecycle#conditions}.
+     *     action occurs on the bucket. Refer to following supported [conditions]{@link https://cloud.google.com/storage/docs/lifecycle#conditions}.
      * @param {string} [rule.storageClass] When using the `setStorageClass`
      *     action, provide this option to dictate which storage class the object
      *     should update to.
@@ -94944,7 +94958,7 @@ class Bucket extends index_js_1.ServiceObject {
      * myBucket.createNotification('my-topic', callback);
      *
      * //-
-     * // Configure the nofiication by providing Notification metadata.
+     * // Configure the notification by providing Notification metadata.
      * //-
      * const metadata = {
      *   objectNamePrefix: 'prefix-'
@@ -95901,7 +95915,7 @@ class Bucket extends index_js_1.ServiceObject {
      * @property {boolean} [virtualHostedStyle=false] Use virtual hosted-style
      *     URLs ('https://mybucket.storage.googleapis.com/...') instead of path-style
      *     ('https://storage.googleapis.com/mybucket/...'). Virtual hosted-style URLs
-     *     should generally be preferred instaed of path-style URL.
+     *     should generally be preferred instead of path-style URL.
      *     Currently defaults to `false` for path-style, although this may change in a
      *     future major-version release.
      * @property {string} [cname] The cname for this bucket, i.e.,
@@ -95948,7 +95962,7 @@ class Bucket extends index_js_1.ServiceObject {
      * @param {boolean} [config.virtualHostedStyle=false] Use virtual hosted-style
      *     URLs ('https://mybucket.storage.googleapis.com/...') instead of path-style
      *     ('https://storage.googleapis.com/mybucket/...'). Virtual hosted-style URLs
-     *     should generally be preferred instaed of path-style URL.
+     *     should generally be preferred instead of path-style URL.
      *     Currently defaults to `false` for path-style, although this may change in a
      *     future major-version release.
      * @param {string} [config.cname] The cname for this bucket, i.e.,
@@ -96038,7 +96052,7 @@ class Bucket extends index_js_1.ServiceObject {
      * @throws {Error} if a metageneration is not provided.
      *
      * @param {number|string} metageneration The bucket's metageneration. This is
-     *     accesssible from calling {@link File#getMetadata}.
+     *     accessible from calling {@link File#getMetadata}.
      * @param {BucketLockCallback} [callback] Callback function.
      * @returns {Promise<BucketLockResponse>}
      *
@@ -98811,6 +98825,7 @@ class File extends index_js_1.ServiceObject {
             retryOptions: retryOptions,
             params: (options === null || options === void 0 ? void 0 : options.preconditionOpts) || this.instancePreconditionOpts,
             universeDomain: this.bucket.storage.universeDomain,
+            useAuthWithCustomEndpoint: this.storage.useAuthWithCustomEndpoint,
             [util_js_1.GCCL_GCS_CMD_KEY]: options[util_js_1.GCCL_GCS_CMD_KEY],
         }, callback);
         this.storage.retryOptions.autoRetry = this.instanceRetryValue;
@@ -99055,6 +99070,9 @@ class File extends index_js_1.ServiceObject {
             transformStreams.push(zlib.createGzip());
         }
         const emitStream = new util_js_2.PassThroughShim();
+        // If `writeStream` is destroyed before the `writing` event, `emitStream` will not have any listeners. This prevents an unhandled error.
+        const noop = () => { };
+        emitStream.on('error', noop);
         let hashCalculatingStream = null;
         if (crc32c || md5) {
             const crc32cInstance = options.resumeCRC32C
@@ -99087,6 +99105,8 @@ class File extends index_js_1.ServiceObject {
             else {
                 this.startResumableUpload_(fileWriteStream, options);
             }
+            // remove temporary noop listener as we now create a pipeline that handles the errors
+            emitStream.removeListener('error', noop);
             (0, stream_1.pipeline)(emitStream, ...transformStreams, fileWriteStream, async (e) => {
                 if (e) {
                     return pipelineCallback(e);
@@ -99221,6 +99241,10 @@ class File extends index_js_1.ServiceObject {
         });
         const destination = options.destination;
         delete options.destination;
+        if (options.encryptionKey) {
+            this.setEncryptionKey(options.encryptionKey);
+            delete options.encryptionKey;
+        }
         const fileStream = this.createReadStream(options);
         let receivedData = false;
         if (destination) {
@@ -99774,7 +99798,7 @@ class File extends index_js_1.ServiceObject {
      * @param {boolean} [config.virtualHostedStyle=false] Use virtual hosted-style
      *     URLs (e.g. 'https://mybucket.storage.googleapis.com/...') instead of path-style
      *     (e.g. 'https://storage.googleapis.com/mybucket/...'). Virtual hosted-style URLs
-     *     should generally be preferred instaed of path-style URL.
+     *     should generally be preferred instead of path-style URL.
      *     Currently defaults to `false` for path-style, although this may change in a
      *     future major-version release.
      * @param {string} [config.cname] The cname for this bucket, i.e.,
@@ -102428,6 +102452,7 @@ class Service {
         this.providedUserAgent = options.userAgent;
         this.universeDomain = options.universeDomain || google_auth_library_1.DEFAULT_UNIVERSE;
         this.customEndpoint = config.customEndpoint || false;
+        this.useAuthWithCustomEndpoint = config.useAuthWithCustomEndpoint;
         this.makeAuthenticatedRequest = util_js_1.util.makeAuthenticatedRequestFactory({
             ...config,
             projectIdRequired: this.projectIdRequired,
@@ -103701,9 +103726,12 @@ class Upload extends stream_1.Writable {
                 !isDefaultUniverseDomain &&
                 !isSubDomainOfUniverse &&
                 !isSubDomainOfDefaultUniverse) {
-                // a custom, non-universe domain,
-                // use gaxios
-                this.authClient = gaxios;
+                // Check if we should use auth with custom endpoint
+                if (cfg.useAuthWithCustomEndpoint !== true) {
+                    // Only bypass auth if explicitly not requested
+                    this.authClient = gaxios;
+                }
+                // Otherwise keep the authenticated client
             }
         }
         this.baseURI = `${this.apiEndpoint}/upload/storage/v1/b`;
@@ -105420,7 +105448,7 @@ class Storage extends index_js_1.Service {
      *     For more information, see {@link https://cloud.google.com/storage/docs/locations| Bucket Locations}.
      * @property {boolean} [dra=false] Specify the storage class as Durable Reduced
      *     Availability.
-     * @property {boolean} [enableObjectRetention=false] Specifiy whether or not object retention should be enabled on this bucket.
+     * @property {boolean} [enableObjectRetention=false] Specify whether or not object retention should be enabled on this bucket.
      * @property {object} [hierarchicalNamespace.enabled=false] Specify whether or not to enable hierarchical namespace on this bucket.
      * @property {string} [location] Specify the bucket's location. If specifying
      *     a dual-region, the `customPlacementConfig` property should be set in conjunction.
@@ -106318,7 +106346,7 @@ class TransferManager {
      * @typedef {object} UploadManyFilesOptions
      * @property {number} [concurrencyLimit] The number of concurrently executing promises
      * to use when uploading the files.
-     * @property {Function} [customDestinationBuilder] A fuction that will take the current path of a local file
+     * @property {Function} [customDestinationBuilder] A function that will take the current path of a local file
      * and return a string representing a custom path to be used to upload the file to GCS.
      * @property {boolean} [skipIfExists] Do not upload the file if it already exists in
      * the bucket. This will set the precondition ifGenerationMatch = 0.
@@ -106587,7 +106615,7 @@ class TransferManager {
      * @property {number} [concurrencyLimit] The number of concurrently executing promises
      * to use when uploading the file.
      * @property {number} [chunkSizeBytes] The size in bytes of each chunk to be uploaded.
-     * @property {string} [uploadName] Name of the file when saving to GCS. If ommitted the name is taken from the file path.
+     * @property {string} [uploadName] Name of the file when saving to GCS. If omitted the name is taken from the file path.
      * @property {number} [maxQueueSize] The number of chunks to be uploaded to hold in memory concurrently. If not specified
      * defaults to the specified concurrency limit.
      * @property {string} [uploadId] If specified attempts to resume a previous upload.
@@ -106600,14 +106628,14 @@ class TransferManager {
      *
      */
     /**
-     * Upload a large file in chunks utilizing parallel upload opertions. If the upload fails, an uploadId and
+     * Upload a large file in chunks utilizing parallel upload operations. If the upload fails, an uploadId and
      * map containing all the successfully uploaded parts will be returned to the caller. These arguments can be used to
      * resume the upload.
      *
      * @param {string} [filePath] The path of the file to be uploaded
      * @param {UploadFileInChunksOptions} [options] Configuration options.
      * @param {MultiPartHelperGenerator} [generator] A function that will return a type that implements the MPU interface. Most users will not need to use this.
-     * @returns {Promise<void>} If successful a promise resolving to void, otherwise a error containing the message, uploadid, and parts map.
+     * @returns {Promise<void>} If successful a promise resolving to void, otherwise a error containing the message, uploadId, and parts map.
      *
      * @example
      * ```
@@ -106873,7 +106901,7 @@ function convertObjKeysToSnakeCase(obj) {
  * @param {boolean} includeTime flag to include hours, minutes, seconds in output.
  * @param {string} dateDelimiter delimiter between date components.
  * @param {string} timeDelimiter delimiter between time components.
- * @returns {string} UTC ISO format of provided date obect.
+ * @returns {string} UTC ISO format of provided date object.
  */
 function formatAsUTCISO(dateTimeToFormat, includeTime = false, dateDelimiter = '', timeDelimiter = '') {
   const year = dateTimeToFormat.getUTCFullYear();
@@ -106952,7 +106980,7 @@ class PassThroughShim extends stream_1.PassThrough {
       this.emit('writing');
       this.shouldEmitWriting = false;
     }
-    // Per the nodejs documention, callback must be invoked on the next tick
+    // Per the nodejs documentation, callback must be invoked on the next tick
     process.nextTick(() => {
       super._write(chunk, encoding, callback);
     });
@@ -107275,7 +107303,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/cache","version":"4.
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"@google-cloud/storage","description":"Cloud Storage Client Library for Node.js","version":"7.16.0","license":"Apache-2.0","author":"Google Inc.","engines":{"node":">=14"},"repository":"googleapis/nodejs-storage","main":"./build/cjs/src/index.js","types":"./build/cjs/src/index.d.ts","type":"module","exports":{".":{"import":{"types":"./build/esm/src/index.d.ts","default":"./build/esm/src/index.js"},"require":{"types":"./build/cjs/src/index.d.ts","default":"./build/cjs/src/index.js"}}},"files":["build/cjs/src","build/cjs/package.json","!build/cjs/src/**/*.map","build/esm/src","!build/esm/src/**/*.map"],"keywords":["google apis client","google api client","google apis","google api","google","google cloud platform","google cloud","cloud","google storage","storage"],"scripts":{"all-test":"npm test && npm run system-test && npm run samples-test","benchwrapper":"node bin/benchwrapper.js","check":"gts check","clean":"rm -rf build/","compile:cjs":"tsc -p ./tsconfig.cjs.json","compile:esm":"tsc -p .","compile":"npm run compile:cjs && npm run compile:esm","conformance-test":"mocha --parallel build/cjs/conformance-test/ --require build/cjs/conformance-test/globalHooks.js","docs-test":"linkinator docs","docs":"jsdoc -c .jsdoc.json","fix":"gts fix","lint":"gts check","postcompile":"cp ./src/package-json-helper.cjs ./build/cjs/src && cp ./src/package-json-helper.cjs ./build/esm/src","postcompile:cjs":"babel --plugins gapic-tools/build/src/replaceImportMetaUrl,gapic-tools/build/src/toggleESMFlagVariable build/cjs/src/util.js -o build/cjs/src/util.js && cp internal-tooling/helpers/package.cjs.json build/cjs/package.json","precompile":"rm -rf build/","preconformance-test":"npm run compile:cjs -- --sourceMap","predocs-test":"npm run docs","predocs":"npm run compile:cjs -- --sourceMap","prelint":"cd samples; npm link ../; npm install","prepare":"npm run compile","presystem-test:esm":"npm run compile:esm","presystem-test":"npm run compile -- --sourceMap","pretest":"npm run compile -- --sourceMap","samples-test":"npm link && cd samples/ && npm link ../ && npm test && cd ../","system-test:esm":"mocha build/esm/system-test --timeout 600000 --exit","system-test":"mocha build/cjs/system-test --timeout 600000 --exit","test":"c8 mocha build/cjs/test"},"dependencies":{"@google-cloud/paginator":"^5.0.0","@google-cloud/projectify":"^4.0.0","@google-cloud/promisify":"<4.1.0","abort-controller":"^3.0.0","async-retry":"^1.3.3","duplexify":"^4.1.3","fast-xml-parser":"^4.4.1","gaxios":"^6.0.2","google-auth-library":"^9.6.3","html-entities":"^2.5.2","mime":"^3.0.0","p-limit":"^3.0.1","retry-request":"^7.0.0","teeny-request":"^9.0.0","uuid":"^8.0.0"},"devDependencies":{"@babel/cli":"^7.22.10","@babel/core":"^7.22.11","@google-cloud/pubsub":"^4.0.0","@grpc/grpc-js":"^1.0.3","@grpc/proto-loader":"^0.7.0","@types/async-retry":"^1.4.3","@types/duplexify":"^3.6.4","@types/mime":"^3.0.0","@types/mocha":"^9.1.1","@types/mockery":"^1.4.29","@types/node":"^22.0.0","@types/node-fetch":"^2.1.3","@types/proxyquire":"^1.3.28","@types/request":"^2.48.4","@types/sinon":"^17.0.0","@types/tmp":"0.2.6","@types/uuid":"^8.0.0","@types/yargs":"^17.0.10","c8":"^9.0.0","form-data":"^4.0.0","gapic-tools":"^0.4.0","gts":"^5.0.0","jsdoc":"^4.0.0","jsdoc-fresh":"^3.0.0","jsdoc-region-tag":"^3.0.0","linkinator":"^3.0.0","mocha":"^9.2.2","mockery":"^2.1.0","nock":"~13.5.0","node-fetch":"^2.6.7","pack-n-play":"^2.0.0","proxyquire":"^2.1.3","sinon":"^18.0.0","nise":"6.0.0","path-to-regexp":"6.3.0","tmp":"^0.2.0","typescript":"^5.1.6","yargs":"^17.3.1"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"@google-cloud/storage","description":"Cloud Storage Client Library for Node.js","version":"7.17.1","license":"Apache-2.0","author":"Google Inc.","engines":{"node":">=14"},"repository":"googleapis/nodejs-storage","main":"./build/cjs/src/index.js","types":"./build/cjs/src/index.d.ts","type":"module","exports":{".":{"import":{"types":"./build/esm/src/index.d.ts","default":"./build/esm/src/index.js"},"require":{"types":"./build/cjs/src/index.d.ts","default":"./build/cjs/src/index.js"}}},"files":["build/cjs/src","build/cjs/package.json","!build/cjs/src/**/*.map","build/esm/src","!build/esm/src/**/*.map"],"keywords":["google apis client","google api client","google apis","google api","google","google cloud platform","google cloud","cloud","google storage","storage"],"scripts":{"all-test":"npm test && npm run system-test && npm run samples-test","benchwrapper":"node bin/benchwrapper.js","check":"gts check","clean":"rm -rf build/","compile:cjs":"tsc -p ./tsconfig.cjs.json","compile:esm":"tsc -p .","compile":"npm run compile:cjs && npm run compile:esm","conformance-test":"mocha --parallel build/cjs/conformance-test/ --require build/cjs/conformance-test/globalHooks.js","docs-test":"linkinator docs","docs":"jsdoc -c .jsdoc.json","fix":"gts fix","lint":"gts check","postcompile":"cp ./src/package-json-helper.cjs ./build/cjs/src && cp ./src/package-json-helper.cjs ./build/esm/src","postcompile:cjs":"babel --plugins gapic-tools/build/src/replaceImportMetaUrl,gapic-tools/build/src/toggleESMFlagVariable build/cjs/src/util.js -o build/cjs/src/util.js && cp internal-tooling/helpers/package.cjs.json build/cjs/package.json","precompile":"rm -rf build/","preconformance-test":"npm run compile:cjs -- --sourceMap","predocs-test":"npm run docs","predocs":"npm run compile:cjs -- --sourceMap","prelint":"cd samples; npm link ../; npm install","prepare":"npm run compile","presystem-test:esm":"npm run compile:esm","presystem-test":"npm run compile -- --sourceMap","pretest":"npm run compile -- --sourceMap","samples-test":"npm link && cd samples/ && npm link ../ && npm test && cd ../","system-test:esm":"mocha build/esm/system-test --timeout 600000 --exit","system-test":"mocha build/cjs/system-test --timeout 600000 --exit","test":"c8 mocha build/cjs/test"},"dependencies":{"@google-cloud/paginator":"^5.0.0","@google-cloud/projectify":"^4.0.0","@google-cloud/promisify":"<4.1.0","abort-controller":"^3.0.0","async-retry":"^1.3.3","duplexify":"^4.1.3","fast-xml-parser":"^4.4.1","gaxios":"^6.0.2","google-auth-library":"^9.6.3","html-entities":"^2.5.2","mime":"^3.0.0","p-limit":"^3.0.1","retry-request":"^7.0.0","teeny-request":"^9.0.0","uuid":"^8.0.0"},"devDependencies":{"@babel/cli":"^7.22.10","@babel/core":"^7.22.11","@google-cloud/pubsub":"^4.0.0","@grpc/grpc-js":"^1.0.3","@grpc/proto-loader":"^0.8.0","@types/async-retry":"^1.4.3","@types/duplexify":"^3.6.4","@types/mime":"^3.0.0","@types/mocha":"^9.1.1","@types/mockery":"^1.4.29","@types/node":"^22.0.0","@types/node-fetch":"^2.1.3","@types/proxyquire":"^1.3.28","@types/request":"^2.48.4","@types/sinon":"^17.0.0","@types/tmp":"0.2.6","@types/uuid":"^8.0.0","@types/yargs":"^17.0.10","c8":"^9.0.0","form-data":"^4.0.4","gapic-tools":"^0.4.0","gts":"^5.0.0","jsdoc":"^4.0.4","jsdoc-fresh":"^4.0.0","jsdoc-region-tag":"^3.0.0","linkinator":"^3.0.0","mocha":"^9.2.2","mockery":"^2.1.0","nock":"~13.5.0","node-fetch":"^2.6.7","pack-n-play":"^2.0.0","proxyquire":"^2.1.3","sinon":"^18.0.0","nise":"6.0.0","path-to-regexp":"6.3.0","tmp":"^0.2.0","typescript":"^5.1.6","yargs":"^17.3.1"}}');
 
 /***/ }),
 

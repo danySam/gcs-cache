@@ -42,7 +42,7 @@ export async function restoreImpl(
         const failOnCacheMiss = utils.getInputAsBool(Inputs.FailOnCacheMiss);
         const lookupOnly = utils.getInputAsBool(Inputs.LookupOnly);
 
-        const cacheKey = await cache.restoreCache(
+        const cacheHit = await cache.restoreCache(
             cachePaths,
             primaryKey,
             restoreKeys,
@@ -50,7 +50,7 @@ export async function restoreImpl(
             enableCrossOsArchive
         );
 
-        if (!cacheKey) {
+        if (!cacheHit) {
             // `cache-hit` is intentionally not set to `false` here to preserve existing behavior
             // See https://github.com/actions/cache/issues/1466
 
@@ -67,6 +67,8 @@ export async function restoreImpl(
             );
             return;
         }
+
+        const { cacheKey } = cacheHit;
 
         // Store the matched cache key in states
         stateProvider.setState(State.CacheMatchedKey, cacheKey);

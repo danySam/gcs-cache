@@ -16,6 +16,11 @@ import { isGCSAvailable } from "./actionUtils";
 
 const DEFAULT_PATH_PREFIX = "github-cache";
 
+export interface CacheHitResult {
+    cacheKey: string;
+    gcsPath: string;
+}
+
 // Function to initialize GCS client using Application Default Credentials
 function getGCSClient(): Storage | null {
     try {
@@ -35,7 +40,7 @@ export async function restoreCache(
     restoreKeys?: string[],
     options?: DownloadOptions,
     enableCrossOsArchive?: boolean
-): Promise<string | undefined> {
+): Promise<CacheHitResult | undefined> {
     // Check if GCS is available
     if (isGCSAvailable()) {
         try {
@@ -47,7 +52,9 @@ export async function restoreCache(
             );
 
             if (result) {
-                core.info(`Cache restored from GCS with key: ${result}`);
+                core.info(
+                    `Cache restored from GCS with key: ${result.cacheKey}`
+                );
                 return result;
             }
 
@@ -63,13 +70,18 @@ export async function restoreCache(
     }
 
     // Fall back to GitHub cache
-    return await cache.restoreCache(
+    const gitHubCacheKey = await cache.restoreCache(
         paths,
         primaryKey,
         restoreKeys,
         options,
         enableCrossOsArchive
     );
+
+    if (gitHubCacheKey) {
+        return { cacheKey: gitHubCacheKey, gcsPath: "" };
+    }
+    return undefined;
 }
 
 export async function saveCache(
@@ -106,11 +118,11 @@ export function isFeatureAvailable(): boolean {
 }
 
 async function restoreFromGCS(
-    _paths: string[], // validate paths?
+    _paths: string[],
     primaryKey: string,
     restoreKeys: string[] = [],
     options?: DownloadOptions
-): Promise<string | undefined> {
+): Promise<CacheHitResult | undefined> {
     const storage = getGCSClient();
     if (!storage) {
         return undefined;
@@ -128,7 +140,7 @@ async function restoreFromGCS(
     );
 
     const keys = [primaryKey, ...restoreKeys];
-    const gcsPath = await findFileOnGCS(
+    const cacheHit = await findLatestFileOnGCS(
         storage,
         bucket,
         pathPrefix,
@@ -136,20 +148,20 @@ async function restoreFromGCS(
         compressionMethod
     );
 
-    if (!gcsPath) {
+    if (!cacheHit) {
         core.info(`No matching cache found`);
         return undefined;
     }
 
     // If lookup only, just return the key
     if (options?.lookupOnly) {
-        core.info(`Cache found in GCS with key: ${gcsPath}`);
-        return gcsPath;
+        core.info(`Cache found in GCS with key: ${cacheHit.cacheKey}`);
+        return cacheHit;
     }
 
     try {
-        core.info(`Downloading from GCS: ${bucket}/${gcsPath}`);
-        const file = storage.bucket(bucket).file(gcsPath);
+        core.info(`Downloading from GCS: ${bucket}/${cacheHit.gcsPath}`);
+        const file = storage.bucket(bucket).file(cacheHit.gcsPath);
         await file.download({ destination: archivePath });
 
         if (core.isDebug()) {
@@ -166,7 +178,7 @@ async function restoreFromGCS(
         await extractTar(archivePath, compressionMethod);
         core.info("Cache restored successfully");
 
-        return gcsPath;
+        return cacheHit;
     } catch (error) {
         core.warning(`Failed to restore: ${(error as Error).message}`);
     } finally {
@@ -248,28 +260,41 @@ async function saveToGCS(
     }
 }
 
-async function findFileOnGCS(
+async function findLatestFileOnGCS(
     storage: Storage,
     bucket: string,
     pathPrefix: string,
     keys: string[],
     compressionMethod: CompressionMethod
-): Promise<string | undefined> {
+): Promise<CacheHitResult | undefined> {
+    let latestFile:
+        | { path: string; cacheKey: string; updated: Date }
+        | undefined = undefined;
     for (const key of keys) {
-        const gcsPath = getGCSPath(pathPrefix, key, compressionMethod);
-        if (await checkFileExists(storage, bucket, gcsPath)) {
-            core.info(`Found file on bucket: ${bucket} with key: ${gcsPath}`);
-            return gcsPath;
+        const prefix = `${pathPrefix}/${key}`;
+        const [files] = await storage.bucket(bucket).getFiles({ prefix });
+        for (const file of files) {
+            if (!file.name.endsWith(utils.getCacheFileName(compressionMethod)))
+                continue;
+            core.debug(
+                `Found file: ${file.name} (created: ${file.metadata.timeCreated})`
+            );
+            const created = file.metadata.timeCreated
+                ? new Date(file.metadata.timeCreated)
+                : undefined;
+            if (!created) {
+                continue;
+            }
+            if (!latestFile || created > latestFile.updated) {
+                latestFile = { path: file.name, cacheKey: key, updated: created };
+            }
         }
     }
+    if (latestFile) {
+        core.info(
+            `Use cache: ${latestFile.path} from GCS bucket ${bucket}`
+        );
+        return { cacheKey: latestFile.cacheKey, gcsPath: latestFile.path };
+    }
     return undefined;
-}
-
-async function checkFileExists(
-    storage: Storage,
-    bucket: string,
-    path: string
-): Promise<boolean> {
-    const [exists] = await storage.bucket(bucket).file(path).exists();
-    return exists;
 }
