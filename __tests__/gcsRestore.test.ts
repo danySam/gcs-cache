@@ -3,11 +3,11 @@ import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 import * as tar from "@actions/cache/lib/internal/tar";
 import * as core from "@actions/core";
 
+import { mockDownload, mockGetFiles } from "../__mocks__/@google-cloud/storage";
 import { Events, RefKey } from "../src/constants";
 import { restoreImpl } from "../src/restoreImpl";
 import { StateProvider } from "../src/stateProvider";
 import * as testUtils from "../src/utils/testUtils";
-import { mockDownload, mockGetFiles } from "../__mocks__/@google-cloud/storage";
 
 jest.mock("@actions/cache");
 jest.mock("@actions/cache/lib/internal/cacheUtils");
