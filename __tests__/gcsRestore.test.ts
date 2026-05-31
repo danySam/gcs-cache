@@ -7,10 +7,7 @@ import { Events, RefKey } from "../src/constants";
 import { restoreImpl } from "../src/restoreImpl";
 import { StateProvider } from "../src/stateProvider";
 import * as testUtils from "../src/utils/testUtils";
-import {
-    mockDownload,
-    mockGetFiles
-} from "../__mocks__/@google-cloud/storage";
+import { mockDownload, mockGetFiles } from "../__mocks__/@google-cloud/storage";
 
 jest.mock("@actions/cache");
 jest.mock("@actions/cache/lib/internal/cacheUtils");
@@ -80,16 +77,14 @@ test("GCS restore with restore key prefix match sets cache-hit to false", async 
     });
 
     // Primary key not found, but prefix match finds an older cache
-    mockGetFiles
-        .mockResolvedValueOnce([[]])
-        .mockResolvedValueOnce([
-            [
-                {
-                    name: "github-cache/node-old-hash.cache.tgz",
-                    metadata: { timeCreated: "2025-01-01T00:00:00Z" }
-                }
-            ]
-        ]);
+    mockGetFiles.mockResolvedValueOnce([[]]).mockResolvedValueOnce([
+        [
+            {
+                name: "github-cache/node-old-hash.cache.tgz",
+                metadata: { timeCreated: "2025-01-01T00:00:00Z" }
+            }
+        ]
+    ]);
     mockDownload.mockResolvedValue(undefined);
 
     const setCacheHitOutputMock = jest.spyOn(core, "setOutput");
@@ -110,20 +105,18 @@ test("GCS restore picks the latest file when multiple prefix matches exist", asy
         gcsBucket: "test-bucket"
     });
 
-    mockGetFiles
-        .mockResolvedValueOnce([[]])
-        .mockResolvedValueOnce([
-            [
-                {
-                    name: "github-cache/node-older.cache.tgz",
-                    metadata: { timeCreated: "2025-01-01T00:00:00Z" }
-                },
-                {
-                    name: "github-cache/node-newer.cache.tgz",
-                    metadata: { timeCreated: "2025-06-01T00:00:00Z" }
-                }
-            ]
-        ]);
+    mockGetFiles.mockResolvedValueOnce([[]]).mockResolvedValueOnce([
+        [
+            {
+                name: "github-cache/node-older.cache.tgz",
+                metadata: { timeCreated: "2025-01-01T00:00:00Z" }
+            },
+            {
+                name: "github-cache/node-newer.cache.tgz",
+                metadata: { timeCreated: "2025-06-01T00:00:00Z" }
+            }
+        ]
+    ]);
     mockDownload.mockResolvedValue(undefined);
 
     const infoMock = jest.spyOn(core, "info");

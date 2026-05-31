@@ -286,14 +286,16 @@ async function findLatestFileOnGCS(
                 continue;
             }
             if (!latestFile || created > latestFile.updated) {
-                latestFile = { path: file.name, cacheKey: key, updated: created };
+                latestFile = {
+                    path: file.name,
+                    cacheKey: key,
+                    updated: created
+                };
             }
         }
     }
     if (latestFile) {
-        core.info(
-            `Use cache: ${latestFile.path} from GCS bucket ${bucket}`
-        );
+        core.info(`Use cache: ${latestFile.path} from GCS bucket ${bucket}`);
         return { cacheKey: latestFile.cacheKey, gcsPath: latestFile.path };
     }
     return undefined;

@@ -92664,7 +92664,11 @@ function findLatestFileOnGCS(storage, bucket, pathPrefix, keys, compressionMetho
                     continue;
                 }
                 if (!latestFile || created > latestFile.updated) {
-                    latestFile = { path: file.name, cacheKey: key, updated: created };
+                    latestFile = {
+                        path: file.name,
+                        cacheKey: key,
+                        updated: created
+                    };
                 }
             }
         }
